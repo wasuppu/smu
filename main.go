@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"io"
+	"log"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -71,51 +73,93 @@ pre code {
 var (
 	tpl       *template.Template
 	tplbuffer bytes.Buffer
-	tplpath   string
-	csspath   string
+	tplpath   = "default"
+	csspath   = "default"
+	port      = 8080
 )
 
 func main() {
-	flag.BoolVar(&noHTML, "n", false, "no html")
-	interactive := flag.Bool("i", false, "interactive mode")
-	outpath := flag.String("o", "", "output file path")
-	flag.StringVar(&tplpath, "t", "default", "template file path")
-	flag.StringVar(&csspath, "css", "default", "css file path")
-	flag.Parse()
+	var (
+		err         error
+		infile      *os.File
+		outpath     string
+		useTemplate bool
+		server      bool
+		interactive bool
+	)
 
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage of smu:\n")
-		flag.PrintDefaults()
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-n", "--no-html":
+			noHTML = true
+		case "-o", "--output":
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				outpath = args[i+1]
+				i++
+			}
+		case "-t", "--template":
+			useTemplate = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				tplpath = args[i+1]
+				i++
+			}
+		case "-css", "--stylesheet":
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				csspath = args[i+1]
+				i++
+			}
+		case "-s", "--server":
+			server = true
+		case "-p", "--port":
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				port, err = strconv.Atoi(args[i+1])
+				must(err)
+				i++
+			}
+		case "-i", "--interactive":
+			interactive = true
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				fmt.Fprintf(os.Stderr, "unknown argument: %s\n", args[i])
+				os.Exit(1)
+			} else if infile == nil {
+				file, err := os.Open(args[i])
+				must(err)
+				infile = file
+			}
+		}
 	}
 
-	var infile *os.File
-	if *interactive {
+	if interactive {
 		infile = os.Stdin
-	} else if flag.NArg() == 0 {
-		flag.Usage()
+	} else if infile == nil {
+		Usage()
 		return
-	} else {
-		file, err := os.Open(flag.Arg(0))
-		must(err)
-		infile = file
 	}
 
 	text, err := io.ReadAll(infile)
 	must(err)
-	if flagVisited("t") {
+	if server {
 		must(processTemplate(text))
-		if *outpath == "-" {
-			fmt.Print(tplbuffer.String())
-		} else {
-			os.WriteFile(*outpath, tplbuffer.Bytes(), 0644)
-		}
+		runserver()
+		return
+	}
+
+	if useTemplate {
+		must(processTemplate(text))
+		writeOutput(outpath, &tplbuffer)
 	} else {
 		process(text, true)
-		if *outpath == "" {
-			fmt.Print(outbuffer.String())
-		} else {
-			os.WriteFile(*outpath, outbuffer.Bytes(), 0644)
-		}
+		writeOutput(outpath, &outbuffer)
+	}
+}
+
+func writeOutput(outpath string, buffer *bytes.Buffer) {
+	if outpath == "" {
+		fmt.Print(buffer.String())
+	} else {
+		os.WriteFile(outpath, buffer.Bytes(), 0644)
 	}
 }
 
@@ -164,14 +208,15 @@ func extractTitle(text string) string {
 	return ""
 }
 
-func flagVisited(name string) bool {
-	visited := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			visited = true
-		}
-	})
-	return visited
+func runserver() {
+	fmt.Printf("Started server on http://localhost:%d\n", port)
+	http.HandleFunc("/", serveMarkdown)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
+}
+
+func serveMarkdown(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+	w.Write(tplbuffer.Bytes())
 }
 
 func must(err error) {
@@ -179,4 +224,20 @@ func must(err error) {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
+}
+
+func Usage() {
+	usage := `Usage: smu [OPTION] ... [FILE]
+    -n, --no-html         no html
+    -i, --interactive     interactive mode
+    -o, --output          string
+          output file path
+    -t, --template         string
+          template file path (default "default")
+    -css, --stylesheet     string
+          css file path (default "default")
+    -s, --server           start server
+    -p, --port             int
+          server port`
+	fmt.Println(usage)
 }
