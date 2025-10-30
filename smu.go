@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -172,7 +173,7 @@ func docodefence(text []byte, newblock bool) int {
 	/* Find start of content and read language string */
 	start := begin + l
 	langStart := start
-	for text[start] != '\n' {
+	for start < end && text[start] != '\n' {
 		start++
 	}
 	langStop := start
@@ -184,8 +185,12 @@ func docodefence(text []byte, newblock bool) int {
 	for {
 		stop = p
 		idx := bytes.Index(text[p+1:], []byte(codeFence))
+		if idx == -1 {
+			p = end
+			break
+		}
 		p += 1 + idx
-		if p >= len(text) || text[p-1] != '\\' {
+		if p >= len(text) || (p > 0 && text[p-1] != '\\') {
 			stop = p
 			break
 		}
@@ -216,13 +221,13 @@ func dohtml(text []byte, newblock bool) int {
 		return 0
 	}
 	p := begin
-	if text[p] != '<' || !unicode.IsLetter(rune(text[p+1])) {
+	if text[p] != '<' || !isAlpha(text[p+1]) {
 		return 0
 	}
 
 	p++
 	tagStart := p
-	for isAlnum(text[p]) && p < end {
+	for p < end && isAlnum(text[p]) {
 		p++
 	}
 	tagend := p
@@ -244,7 +249,6 @@ func dohtml(text []byte, newblock bool) int {
 	}
 
 	return 0
-
 }
 
 func dolineprefix(text []byte, newBlock bool) int {
@@ -308,7 +312,7 @@ func dolineprefix(text []byte, newBlock bool) int {
 
 		/* Skip empty lines in block */
 		bs := buffer.Bytes()
-		for j < len(bs) && bs[j] == '\n' {
+		for j > 0 && j < len(bs) && bs[j] == '\n' {
 			j--
 		}
 
@@ -379,11 +383,11 @@ func dolink(text []byte, newBlock bool) int {
 		title = p + 1
 		/* strip trailing whitespace */
 		linkend = p
-		for linkend > link && unicode.IsSpace(rune(text[linkend-1])) {
+		for linkend > link && isSpace(text[linkend-1]) {
 			linkend--
 		}
 		titleend = q - 1
-		for titleend > link && unicode.IsSpace(rune(text[titleend])) {
+		for titleend > link && isSpace(text[titleend]) {
 			titleend--
 		}
 		if titleend < title || text[titleend] != sep {
@@ -448,7 +452,7 @@ func dolist(text []byte, newBlock bool) int {
 		marker = text[p]
 	} else {
 		numStart = p
-		for p < end && text[p] >= '0' && text[p] <= '9' {
+		for p < end && isDigit(text[p]) {
 			p++
 		}
 		if p >= end || (text[p] != '.' && text[p] != ')') {
@@ -457,13 +461,13 @@ func dolist(text []byte, newBlock bool) int {
 		startNumber, _ = strconv.Atoi(string(text[numStart:p]))
 	}
 	p++
-	if p >= end || !(text[p] == ' ' || text[p] == '\t') {
+	if p >= end || !isSpace(text[p]) {
 		return 0
 	}
 
 	endParagraph()
 	p++
-	for p != end && (text[p] == ' ' || text[p] == '\t') {
+	for p != end && isSpace(text[p]) {
 		p++
 	}
 	ident := p - q
@@ -490,9 +494,9 @@ func dolist(text []byte, newBlock bool) int {
 					break
 				} else {
 					/* Handle empty lines */
-					for q = p + 1; text[q] == ' ' || text[q] == '\t' && q < end; q++ {
+					for q = p + 1; q < end && isSpace(text[q]); q++ {
 					}
-					if text[q] == '\n' {
+					if q < end && text[q] == '\n' {
 						buffer.WriteByte('\n')
 						i++
 						run = false
@@ -502,13 +506,13 @@ func dolist(text []byte, newBlock bool) int {
 				}
 				q = p + 1
 				j = 0
-				if marker != 0 && text[q] == marker {
+				if marker != 0 && q < end && text[q] == marker {
 					j = 1
 				} else {
-					for q+j != end && text[q+j] >= '0' && text[q+j] <= '9' && j < ident {
+					for q+j < end && isDigit(text[q+j]) && j < ident {
 						j++
 					}
-					if q+j == end {
+					if q+j >= end {
 						break
 					}
 					if j > 0 && (text[q+j] == '.' || text[q+j] == ')') {
@@ -518,7 +522,7 @@ func dolist(text []byte, newBlock bool) int {
 					}
 				}
 				if q+ident < end {
-					for (text[q+j] == ' ' || text[q+j] == '\t') && j < ident {
+					for j < ident && q+j < end && isSpace(text[q+j]) {
 						j++
 					}
 				}
@@ -527,7 +531,7 @@ func dolist(text []byte, newBlock bool) int {
 					i++
 					p += ident
 					run = true
-					if text[q] == ' ' || text[q] == '\t' {
+					if q < end && isSpace(text[q]) {
 						p++
 					} else {
 						break
@@ -550,7 +554,7 @@ func dolist(text []byte, newBlock bool) int {
 	}
 	p--
 	p--
-	for text[p] == '\n' {
+	for p > begin && text[p] == '\n' {
 		p--
 	}
 	return -(p - begin + 1)
@@ -603,20 +607,17 @@ func dotable(text []byte, newBlock bool) int {
 		for p < end && text[p] != '\n' {
 			p++
 		}
-		if text[p] == '\n' { /* load alignment from 2nd line */
+		if p < end && text[p] == '\n' { /* load alignment from 2nd line */
 			for i, p := -1, p+1; p < end && text[p] != '\n'; p++ {
 				if text[p] == '|' {
 					i++
-					for {
+					for p+1 < end && isSpace(text[p+1]) {
 						p++
-						if !(p < end && (text[p] == ' ' || text[p] == '\t')) {
-							break
-						}
 					}
-					if i < l && text[p] == ':' {
+					if i < l && p+1 < end && text[p+1] == ':' {
 						calign |= 1 << (i * 2)
 					}
-					if text[p] == '\n' {
+					if p+1 < end && text[p+1] == '\n' {
 						break
 					}
 				} else if i < l && text[p] == ':' {
@@ -645,15 +646,14 @@ func dotable(text []byte, newBlock bool) int {
 	}
 
 	/* open cell */
+	align := 0
 	if incell < l {
-		l = int((calign >> (incell * 2)) & 3)
-	} else {
-		l = 0
+		align = int((calign >> (incell * 2)) & 3)
 	}
 
-	fmt.Fprintf(os.Stdout, "<t%c%s>", typ, alignTable[l])
+	fmt.Fprintf(os.Stdout, "<t%c%s>", typ, alignTable[align])
 	incell++
-	for p = begin + 1; p < end && text[p] == ' '; p++ {
+	for p = begin + 1; p < end && isSpace(text[p]); p++ {
 	}
 	return p - begin
 }
@@ -720,11 +720,11 @@ func doshortlink(text []byte, newBlock bool) int {
 			fmt.Fprint(os.Stdout, "<a href=\"")
 			if ismall == 1 {
 				fmt.Fprint(os.Stdout, "&#x6D;&#x61;i&#x6C;&#x74;&#x6F;:")
-				for c := begin + 1; text[c] != '>'; c++ {
+				for c := begin + 1; c < p; c++ {
 					fmt.Fprintf(os.Stdout, "&#%d;", text[c])
 				}
 				fmt.Fprint(os.Stdout, "\">")
-				for c := begin + 1; text[c] != '>'; c++ {
+				for c := begin + 1; c < p; c++ {
 					fmt.Fprintf(os.Stdout, "&#%d;", text[c])
 				}
 			} else {
@@ -749,29 +749,31 @@ func dosurround(text []byte, newBlock bool) int {
 		start := begin + l
 		p := start
 		var stop int
-		for {
-			stop = p
-			idx := bytes.Index(text[p+1:], []byte(surround.search))
-			p += idx + 1
-			if p == len(text) || text[p-1] != '\\' {
+
+		for p < end {
+			idx := bytes.Index(text[p:], []byte(surround.search))
+			if idx == -1 {
 				break
 			}
+			stop = p + idx
+
+			if stop > start && text[stop-1] == '\\' {
+				p = stop + 1
+				continue
+			}
+			break
 		}
 
-		if p == len(text) || text[p-1] == '\\' { /* No unescaped closing marker found */
+		if stop < start || stop >= end {
 			continue
 		}
-		stop = p
-		if p == len(text) || stop < start || stop >= end {
-			continue
-		}
+
 		fmt.Fprint(os.Stdout, surround.before)
 
 		/* Single space at start and end are ignored */
-		if text[start] == ' ' && text[stop-1] == ' ' && start < stop-1 {
+		if start < stop && text[start] == ' ' && text[stop-1] == ' ' && start < stop-1 {
 			start++
 			stop--
-			l++
 		}
 
 		if surround.process > 0 {
@@ -780,7 +782,7 @@ func dosurround(text []byte, newBlock bool) int {
 			hprint(text[start:stop])
 		}
 		fmt.Fprint(os.Stdout, surround.after)
-		return stop - start + 2*l
+		return stop - begin + l
 	}
 	return 0
 }
@@ -796,7 +798,7 @@ func dounderline(text []byte, newBlock bool) int {
 		l++
 	}
 	p += l + 1
-	if l == 0 {
+	if l == 0 || p >= end {
 		return 0
 	}
 
@@ -821,8 +823,13 @@ func dounderline(text []byte, newBlock bool) int {
 }
 
 func hprint(text []byte) {
-	for _, b := range text {
-		switch b {
+	for len(text) > 0 {
+		r, size := utf8.DecodeRune(text)
+		if r == utf8.RuneError {
+			break
+		}
+
+		switch r {
 		case '&':
 			fmt.Fprint(os.Stdout, "&amp;")
 		case '"':
@@ -832,8 +839,9 @@ func hprint(text []byte) {
 		case '<':
 			fmt.Fprint(os.Stdout, "&lt;")
 		default:
-			fmt.Fprintf(os.Stdout, "%c", b)
+			fmt.Fprintf(os.Stdout, "%c", r)
 		}
+		text = text[size:]
 	}
 }
 
@@ -860,8 +868,19 @@ func process(text []byte, newblock bool) {
 		if affected != 0 {
 			p += abs(affected)
 		} else {
-			fmt.Fprintf(os.Stdout, "%c", text[p])
-			p++
+			if text[p] < utf8.RuneSelf {
+				fmt.Fprintf(os.Stdout, "%c", text[p])
+				p++
+			} else {
+				r, size := utf8.DecodeRune(text[p:])
+				if r != utf8.RuneError {
+					fmt.Fprintf(os.Stdout, "%c", r)
+					p += size
+				} else {
+					fmt.Fprintf(os.Stdout, "%c", text[p])
+					p++
+				}
+			}
 		}
 
 		/* Don't print single newline at end */
@@ -890,15 +909,29 @@ func abs(n int) int {
 }
 
 func isDigit(c byte) bool {
-	return c >= '0' && c <= '9'
+	r, _ := utf8.DecodeRune([]byte{c})
+	if r == utf8.RuneError {
+		return false
+	}
+	return unicode.IsDigit(r)
 }
 
 func isAlpha(c byte) bool {
-	return (c >= 'a' && c <= 'z') ||
-		(c >= 'A' && c <= 'Z') ||
-		c == '_'
+	r, _ := utf8.DecodeRune([]byte{c})
+	if r == utf8.RuneError {
+		return false
+	}
+	return unicode.IsLetter(r) || r == '_'
 }
 
 func isAlnum(c byte) bool {
-	return isAlpha(c) || isDigit(c)
+	r, _ := utf8.DecodeRune([]byte{c})
+	if r == utf8.RuneError {
+		return false
+	}
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+func isSpace(c byte) bool {
+	return c == ' ' || c == '\t'
 }
