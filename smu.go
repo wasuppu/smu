@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"regexp"
 	"strconv"
 	"unicode"
@@ -36,6 +35,10 @@ var (
 	surrounds   []Tag
 	replaces    [][2]string
 	alignTable  []string
+)
+
+var (
+	outbuffer bytes.Buffer
 )
 
 func init() {
@@ -139,7 +142,7 @@ func init() {
 
 func endParagraph() {
 	if inParagraph {
-		fmt.Fprint(os.Stdout, "</p>\n")
+		fmt.Fprint(&outbuffer, "</p>\n")
 		inParagraph = false
 	}
 }
@@ -154,7 +157,7 @@ func docomment(text []byte, newblock bool) int {
 	if p == -1 || p+3 > end {
 		return 0
 	}
-	fmt.Fprintf(os.Stdout, "%s\n", text[begin:][:p+3])
+	fmt.Fprintf(&outbuffer, "%s\n", text[begin:][:p+3])
 	return (p + 3) * map[bool]int{true: -1, false: 1}[newblock]
 }
 
@@ -203,14 +206,14 @@ func docodefence(text []byte, newblock bool) int {
 
 	/* Print output */
 	if langStart == langStop {
-		fmt.Fprint(os.Stdout, "<pre><code>")
+		fmt.Fprint(&outbuffer, "<pre><code>")
 	} else {
-		fmt.Fprint(os.Stdout, "<pre><code class=\"language-")
+		fmt.Fprint(&outbuffer, "<pre><code class=\"language-")
 		hprint(text[langStart:langStop])
-		fmt.Fprintln(os.Stdout, "\">")
+		fmt.Fprintln(&outbuffer, "\">")
 	}
 	hprint(text[start:stop])
-	fmt.Fprint(os.Stdout, "</code></pre>\n")
+	fmt.Fprint(&outbuffer, "</code></pre>\n")
 	return -(stop - begin + l)
 }
 
@@ -238,13 +241,13 @@ func dohtml(text []byte, newblock bool) int {
 	closeTag := []byte("</" + tag + ">")
 	closeIdx := bytes.Index(text[p:], closeTag)
 	if closeIdx != -1 {
-		fmt.Fprintf(os.Stdout, "%s", text[begin:p+closeIdx+len(closeTag)])
+		fmt.Fprintf(&outbuffer, "%s", text[begin:p+closeIdx+len(closeTag)])
 		return p + closeIdx + len(closeTag)
 	}
 
 	closeIdx = bytes.IndexByte(text[tagend:], '>')
 	if closeIdx != -1 {
-		fmt.Fprintf(os.Stdout, "%s", text[begin:tagend+closeIdx+1])
+		fmt.Fprintf(&outbuffer, "%s", text[begin:tagend+closeIdx+1])
 		return tagend + closeIdx + 1
 	}
 
@@ -274,16 +277,16 @@ func dolineprefix(text []byte, newBlock bool) int {
 		}
 
 		if text[begin] == '\n' {
-			fmt.Fprint(os.Stdout, "\n")
+			fmt.Fprint(&outbuffer, "\n")
 		}
 
 		/* All line prefixes add a block element. These are not allowed
 		 * inside paragraphs, so we must end the paragraph first. */
 		endParagraph()
 
-		fmt.Fprint(os.Stdout, lineprefix.before)
+		fmt.Fprint(&outbuffer, lineprefix.before)
 		if lineprefix.search[l-1] == '\n' {
-			fmt.Fprint(os.Stdout, "\n")
+			fmt.Fprint(&outbuffer, "\n")
 			return l - 1 + consumedInput
 		}
 
@@ -322,7 +325,7 @@ func dolineprefix(text []byte, newBlock bool) int {
 		} else {
 			hprint(bs)
 		}
-		fmt.Fprintln(os.Stdout, lineprefix.after)
+		fmt.Fprintln(&outbuffer, lineprefix.after)
 		return -(p - begin)
 	}
 	return 0
@@ -406,29 +409,29 @@ func dolink(text []byte, newBlock bool) int {
 
 	l := q + 1 - begin
 	if img {
-		fmt.Fprint(os.Stdout, "<img src=\"")
+		fmt.Fprint(&outbuffer, "<img src=\"")
 		hprint(text[link:linkend])
-		fmt.Fprint(os.Stdout, "\" alt=\"")
+		fmt.Fprint(&outbuffer, "\" alt=\"")
 		hprint(text[desc:descend])
-		fmt.Fprint(os.Stdout, "\" ")
+		fmt.Fprint(&outbuffer, "\" ")
 		if title != -1 && titleend != -1 {
-			fmt.Fprint(os.Stdout, "title=\"")
+			fmt.Fprint(&outbuffer, "title=\"")
 			hprint(text[title:titleend])
-			fmt.Fprint(os.Stdout, "\" ")
+			fmt.Fprint(&outbuffer, "\" ")
 		}
-		fmt.Fprint(os.Stdout, "/>")
+		fmt.Fprint(&outbuffer, "/>")
 	} else {
-		fmt.Fprint(os.Stdout, "<a href=\"")
+		fmt.Fprint(&outbuffer, "<a href=\"")
 		hprint(text[link:linkend])
-		fmt.Fprint(os.Stdout, "\"")
+		fmt.Fprint(&outbuffer, "\"")
 		if title != -1 && titleend != -1 {
-			fmt.Fprint(os.Stdout, " title=\"")
+			fmt.Fprint(&outbuffer, " title=\"")
 			hprint(text[title:titleend])
-			fmt.Fprint(os.Stdout, "\"")
+			fmt.Fprint(&outbuffer, "\"")
 		}
-		fmt.Fprint(os.Stdout, ">")
+		fmt.Fprint(&outbuffer, ">")
 		process(text[desc:descend], false)
-		fmt.Fprint(os.Stdout, "</a>")
+		fmt.Fprint(&outbuffer, "</a>")
 	}
 	return l
 }
@@ -472,15 +475,15 @@ func dolist(text []byte, newBlock bool) int {
 	}
 	ident := p - q
 	if !newBlock {
-		fmt.Fprint(os.Stdout, "\n")
+		fmt.Fprint(&outbuffer, "\n")
 	}
 
 	if marker != 0 {
-		fmt.Fprint(os.Stdout, "<ul>\n")
+		fmt.Fprint(&outbuffer, "<ul>\n")
 	} else if startNumber == 1 {
-		fmt.Fprint(os.Stdout, "<ol>\n")
+		fmt.Fprint(&outbuffer, "<ol>\n")
 	} else {
-		fmt.Fprintf(os.Stdout, "<ol start=\"%d\">\n", startNumber)
+		fmt.Fprintf(&outbuffer, "<ol start=\"%d\">\n", startNumber)
 	}
 
 	var buffer bytes.Buffer
@@ -542,15 +545,15 @@ func dolist(text []byte, newBlock bool) int {
 			}
 			buffer.WriteByte(text[p])
 		}
-		fmt.Fprint(os.Stdout, "<li>")
+		fmt.Fprint(&outbuffer, "<li>")
 		bs := buffer.Bytes()
 		process(bs, isBlock > 1 || (isBlock == 1 && run))
-		fmt.Fprint(os.Stdout, "</li>\n")
+		fmt.Fprint(&outbuffer, "</li>\n")
 	}
 	if marker != 0 {
-		fmt.Fprint(os.Stdout, "</ul>\n")
+		fmt.Fprint(&outbuffer, "</ul>\n")
 	} else {
-		fmt.Fprint(os.Stdout, "</ol>\n")
+		fmt.Fprint(&outbuffer, "</ol>\n")
 	}
 	p--
 	p--
@@ -583,9 +586,9 @@ func dotable(text []byte, newBlock bool) int {
 
 	if inrow != 0 && (begin+1 >= end || text[begin+1] == '\n') { /* close cell and row and if ends, table too */
 		if inrow == -1 {
-			fmt.Fprintf(os.Stdout, "</t%c></tr>", 'h')
+			fmt.Fprintf(&outbuffer, "</t%c></tr>", 'h')
 		} else {
-			fmt.Fprintf(os.Stdout, "</t%c></tr>", 'd')
+			fmt.Fprintf(&outbuffer, "</t%c></tr>", 'd')
 		}
 		if inrow == -1 {
 			intable = 2
@@ -593,7 +596,7 @@ func dotable(text []byte, newBlock bool) int {
 		inrow = 0
 		if end-begin <= 2 || text[begin+2] == '\n' {
 			intable = 0
-			fmt.Fprint(os.Stdout, "\n</table>\n")
+			fmt.Fprint(&outbuffer, "\n</table>\n")
 		}
 		return 1
 	}
@@ -624,7 +627,7 @@ func dotable(text []byte, newBlock bool) int {
 					calign |= 1 << (i*2 + 1)
 				}
 			}
-			fmt.Fprint(os.Stdout, "<table>\n<tr>")
+			fmt.Fprint(&outbuffer, "<table>\n<tr>")
 		}
 	}
 
@@ -632,7 +635,7 @@ func dotable(text []byte, newBlock bool) int {
 	if inrow == 0 {
 		inrow = 1
 		incell = 0
-		fmt.Fprint(os.Stdout, "<tr>")
+		fmt.Fprint(&outbuffer, "<tr>")
 	}
 
 	typ := 'd'
@@ -642,7 +645,7 @@ func dotable(text []byte, newBlock bool) int {
 
 	/* close cell */
 	if incell != 0 {
-		fmt.Fprintf(os.Stdout, "</t%c>", typ)
+		fmt.Fprintf(&outbuffer, "</t%c>", typ)
 	}
 
 	/* open cell */
@@ -651,7 +654,7 @@ func dotable(text []byte, newBlock bool) int {
 		align = int((calign >> (incell * 2)) & 3)
 	}
 
-	fmt.Fprintf(os.Stdout, "<t%c%s>", typ, alignTable[align])
+	fmt.Fprintf(&outbuffer, "<t%c%s>", typ, alignTable[align])
 	incell++
 	for p = begin + 1; p < end && isSpace(text[p]); p++ {
 	}
@@ -672,7 +675,7 @@ func doparagraph(text []byte, newBlock bool) int {
 		p = begin + 1 + match[0]
 	}
 
-	fmt.Fprint(os.Stdout, "<p>")
+	fmt.Fprint(&outbuffer, "<p>")
 	inParagraph = true
 	process(text[begin:p], false)
 	endParagraph()
@@ -689,7 +692,7 @@ func doreplace(text []byte, newBlock bool) int {
 			continue
 		}
 		if bytes.HasPrefix(text[begin:begin+l], []byte(replace[0])) {
-			fmt.Fprint(os.Stdout, replace[1])
+			fmt.Fprint(&outbuffer, replace[1])
 			return l
 		}
 	}
@@ -717,22 +720,22 @@ func doshortlink(text []byte, newBlock bool) int {
 			if ismall == 0 {
 				return 0
 			}
-			fmt.Fprint(os.Stdout, "<a href=\"")
+			fmt.Fprint(&outbuffer, "<a href=\"")
 			if ismall == 1 {
-				fmt.Fprint(os.Stdout, "&#x6D;&#x61;i&#x6C;&#x74;&#x6F;:")
+				fmt.Fprint(&outbuffer, "&#x6D;&#x61;i&#x6C;&#x74;&#x6F;:")
 				for c := begin + 1; c < p; c++ {
-					fmt.Fprintf(os.Stdout, "&#%d;", text[c])
+					fmt.Fprintf(&outbuffer, "&#%d;", text[c])
 				}
-				fmt.Fprint(os.Stdout, "\">")
+				fmt.Fprint(&outbuffer, "\">")
 				for c := begin + 1; c < p; c++ {
-					fmt.Fprintf(os.Stdout, "&#%d;", text[c])
+					fmt.Fprintf(&outbuffer, "&#%d;", text[c])
 				}
 			} else {
 				hprint(text[begin+1 : p])
-				fmt.Fprint(os.Stdout, "\">")
+				fmt.Fprint(&outbuffer, "\">")
 				hprint(text[begin+1 : p])
 			}
-			fmt.Fprint(os.Stdout, "</a>")
+			fmt.Fprint(&outbuffer, "</a>")
 			return p - begin + 1
 		}
 	}
@@ -768,7 +771,7 @@ func dosurround(text []byte, newBlock bool) int {
 			continue
 		}
 
-		fmt.Fprint(os.Stdout, surround.before)
+		fmt.Fprint(&outbuffer, surround.before)
 
 		/* Single space at start and end are ignored */
 		if start < stop && text[start] == ' ' && text[stop-1] == ' ' && start < stop-1 {
@@ -781,7 +784,7 @@ func dosurround(text []byte, newBlock bool) int {
 		} else {
 			hprint(text[start:stop])
 		}
-		fmt.Fprint(os.Stdout, surround.after)
+		fmt.Fprint(&outbuffer, surround.after)
 		return stop - begin + l
 	}
 	return 0
@@ -809,13 +812,13 @@ func dounderline(text []byte, newBlock bool) int {
 		}
 
 		if j >= 3 {
-			fmt.Fprint(os.Stdout, underline.before)
+			fmt.Fprint(&outbuffer, underline.before)
 			if underline.process > 0 {
 				process(text[:l], false)
 			} else {
 				hprint(text[:l])
 			}
-			fmt.Fprint(os.Stdout, underline.after)
+			fmt.Fprint(&outbuffer, underline.after)
 			return -(j + p - begin)
 		}
 	}
@@ -831,15 +834,15 @@ func hprint(text []byte) {
 
 		switch r {
 		case '&':
-			fmt.Fprint(os.Stdout, "&amp;")
+			fmt.Fprint(&outbuffer, "&amp;")
 		case '"':
-			fmt.Fprint(os.Stdout, "&quot;")
+			fmt.Fprint(&outbuffer, "&quot;")
 		case '>':
-			fmt.Fprint(os.Stdout, "&gt;")
+			fmt.Fprint(&outbuffer, "&gt;")
 		case '<':
-			fmt.Fprint(os.Stdout, "&lt;")
+			fmt.Fprint(&outbuffer, "&lt;")
 		default:
-			fmt.Fprintf(os.Stdout, "%c", r)
+			fmt.Fprintf(&outbuffer, "%c", r)
 		}
 		text = text[size:]
 	}
@@ -869,15 +872,15 @@ func process(text []byte, newblock bool) {
 			p += abs(affected)
 		} else {
 			if text[p] < utf8.RuneSelf {
-				fmt.Fprintf(os.Stdout, "%c", text[p])
+				fmt.Fprintf(&outbuffer, "%c", text[p])
 				p++
 			} else {
 				r, size := utf8.DecodeRune(text[p:])
 				if r != utf8.RuneError {
-					fmt.Fprintf(os.Stdout, "%c", r)
+					fmt.Fprintf(&outbuffer, "%c", r)
 					p += size
 				} else {
-					fmt.Fprintf(os.Stdout, "%c", text[p])
+					fmt.Fprintf(&outbuffer, "%c", text[p])
 					p++
 				}
 			}
@@ -894,11 +897,6 @@ func process(text []byte, newblock bool) {
 			newblock = affected < 0
 		}
 	}
-}
-
-func main() {
-	md, _ := os.ReadFile(os.Args[1])
-	process(md, true)
 }
 
 func abs(n int) int {
