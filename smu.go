@@ -1,4 +1,4 @@
-package main
+package smu
 
 import (
 	"bytes"
@@ -26,7 +26,7 @@ type Tag struct {
 type Parser func(text []byte, newblock bool) (affected int)
 
 var (
-	noHTML      bool
+	NoHTML      bool
 	inParagraph bool
 	pEndRegex   *regexp.Regexp
 	parsers     []Parser
@@ -149,7 +149,7 @@ func endParagraph() {
 
 func docomment(text []byte, newblock bool) int {
 	begin, end := 0, len(text)
-	if noHTML || !bytes.HasPrefix(text[begin:], []byte(htmlComment)) {
+	if NoHTML || !bytes.HasPrefix(text[begin:], []byte(htmlComment)) {
 		return 0
 	}
 	p := bytes.Index(text[begin:], []byte("-->"))
@@ -220,7 +220,7 @@ func docodefence(text []byte, newblock bool) int {
 func dohtml(text []byte, newblock bool) int {
 	begin, end := 0, len(text)
 
-	if noHTML || begin+2 >= end {
+	if NoHTML || begin+2 >= end {
 		return 0
 	}
 	p := begin
@@ -897,6 +897,13 @@ func process(text []byte, newblock bool) {
 			newblock = affected < 0
 		}
 	}
+}
+
+func Process(text []byte) []byte {
+	process(text, true)
+	result := outbuffer.Bytes()
+	outbuffer.Reset()
+	return result
 }
 
 func abs(n int) int {

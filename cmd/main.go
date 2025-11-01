@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+
+	"github.com/wasuppu/smu"
 )
 
 const (
@@ -92,7 +94,7 @@ func main() {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-n", "--no-html":
-			noHTML = true
+			smu.NoHTML = true
 		case "-o", "--output":
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				outpath = args[i+1]
@@ -148,24 +150,23 @@ func main() {
 
 	if useTemplate {
 		must(processTemplate(text))
-		writeOutput(outpath, &tplbuffer)
+		writeOutput(outpath, tplbuffer.Bytes())
 	} else {
-		process(text, true)
-		writeOutput(outpath, &outbuffer)
+		result := smu.Process(text)
+		writeOutput(outpath, result)
 	}
 }
 
-func writeOutput(outpath string, buffer *bytes.Buffer) {
+func writeOutput(outpath string, result []byte) {
 	if outpath == "" {
-		fmt.Print(buffer.String())
+		fmt.Print(string(result))
 	} else {
-		os.WriteFile(outpath, buffer.Bytes(), 0644)
+		os.WriteFile(outpath, result, 0644)
 	}
 }
 
 func processTemplate(text []byte) (err error) {
-	process(text, true)
-	body := outbuffer.String()
+	body := string(smu.Process(text))
 	title := extractTitle(body)
 
 	if tplpath == "default" {
